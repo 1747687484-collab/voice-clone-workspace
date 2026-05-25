@@ -1,0 +1,18 @@
+{
+  "workspace_version": 1,
+  "applio": {
+    "install_path": "",
+    "notes": "Install Applio separately, then train/infer from its GUI."
+  },
+  "audio": {
+    "sample_rate": 48000,
+    "dataset_segment_seconds": 12,
+    "dataset_loudness_i": -20,
+    "mix_loudness_i": -16
+  },
+  "rvc": {
+    "recommended_f0_method": "rmvpe",
+    "recommended_sample_rate": "48k",
+    "recommended_first_batch_size": "6-8 for RTX 4060 Laptop 8GB"
+  }
+}
