@@ -8,7 +8,10 @@
     "sample_rate": 48000,
     "dataset_segment_seconds": 12,
     "dataset_loudness_i": -20,
-    "mix_loudness_i": -16
+    "mix_loudness_i": -16,
+    "denoise": true,
+    "reverb": "subtle",
+    "vocal_eq": true
   },
   "rvc": {
     "recommended_f0_method": "rmvpe",

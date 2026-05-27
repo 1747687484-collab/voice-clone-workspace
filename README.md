@@ -60,7 +60,7 @@ python .\voice_cover.py doctor
 把你的录音放进 `recordings/raw/`，然后运行：
 
 ```powershell
-python .\voice_cover.py make-dataset recordings/raw --name my_voice --trim-silence
+python .\voice_cover.py make-dataset recordings/raw --name my_voice --trim-silence --denoise
 ```
 
 脚本会输出：
@@ -155,7 +155,7 @@ songs/stems/song/instrumental.wav
 Applio 输出转换后的人声后，运行：
 
 ```powershell
-python .\voice_cover.py mix --name song --vocals songs/converted_vocals/song_my_voice.wav
+python .\voice_cover.py mix --name song --vocals songs/converted_vocals/song_my_voice.wav --reverb subtle --vocal-eq
 ```
 
 如果人声太小：

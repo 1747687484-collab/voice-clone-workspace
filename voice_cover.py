@@ -60,6 +60,9 @@ DEFAULT_CONFIG = {
         "dataset_segment_seconds": 12,
         "dataset_loudness_i": -20,
         "mix_loudness_i": -16,
+        "denoise": True,
+        "reverb": "subtle",
+        "vocal_eq": True,
     },
     "rvc": {
         "recommended_f0_method": "rmvpe",
@@ -324,7 +327,10 @@ def cmd_make_dataset(args: argparse.Namespace) -> None:
         if not args.dry_run:
             shutil.copy2(source, raw_target)
 
-        filters = [f"highpass=f=60", f"loudnorm=I={loudness_i}:TP=-1.5:LRA=11"]
+        filters = [f"highpass=f=60"]
+        if getattr(args, "denoise", True):
+            filters.append("afftdn")
+        filters.append(f"loudnorm=I={loudness_i}:TP=-1.5:LRA=14")
         if args.trim_silence:
             filters.insert(
                 0,
@@ -391,6 +397,36 @@ def cmd_make_dataset(args: argparse.Namespace) -> None:
     print_heading("Dataset paths for Applio")
     print(f"Use this as the training dataset folder: {segments_dir.resolve()}")
     print("Recommended Applio settings: sample rate 48k, f0 method RMVPE, batch size 6-8 first.")
+
+
+def cmd_analyze(args: argparse.Namespace) -> None:
+    ffprobe = tool_path("ffprobe")
+    if not ffprobe:
+        raise AppError("ffprobe not found.")
+    voice_name = safe_name(args.name)
+    segments_dir = ROOT / "datasets" / voice_name / "segments"
+    if not segments_dir.exists():
+        raise AppError(f"Dataset segments not found: {segments_dir}")
+    
+    files = list(segments_dir.glob("*.wav"))
+    if not files:
+        raise AppError("No wav files found in dataset.")
+        
+    total_duration = 0.0
+    for f in files:
+        ok, out = capture_command([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(f)])
+        if ok and out:
+            total_duration += float(out)
+            
+    print_heading(f"Dataset Analysis: {voice_name}")
+    print(f"Total segments: {len(files)}")
+    print(f"Total duration: {total_duration / 60:.2f} minutes")
+    if total_duration < 5.0:
+        print("[WARNING] Dataset is less than 5 minutes. Consider recording more singing materials.")
+    else:
+        print("[OK] Dataset duration is sufficient.")
+        
+    print("\nTip: A good dataset should contain a wide range of pitches (Do-Re-Mi) and varied singing techniques.")
 
 
 def cmd_trim_test(args: argparse.Namespace) -> None:
@@ -523,12 +559,24 @@ def cmd_mix(args: argparse.Namespace) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     offset_ms = int(args.vocal_offset_ms)
+    v_fx = ""
+    if args.vocal_eq:
+        v_fx += "equalizer=f=300:t=q:w=1:g=-2,equalizer=f=3000:t=q:w=1.5:g=1.5,"
+    if args.reverb == "subtle":
+        v_fx += "aecho=0.8:0.7:40:0.3,"
+    elif args.reverb == "medium":
+        v_fx += "aecho=0.8:0.75:60|80:0.4|0.25,"
+        
+    i_fx = ""
+    if args.vocal_eq:
+        i_fx += ",equalizer=f=2000:t=q:w=2:g=-1.5"
+
     if offset_ms >= 0:
-        vocal_chain = f"[0:a]adelay={offset_ms}:all=1,volume={args.vocal_gain_db}dB[v]"
-        inst_chain = f"[1:a]volume={args.instrumental_gain_db}dB[i]"
+        vocal_chain = f"[0:a]{v_fx}adelay={offset_ms}:all=1,volume={args.vocal_gain_db}dB[v]"
+        inst_chain = f"[1:a]volume={args.instrumental_gain_db}dB{i_fx}[i]"
     else:
-        vocal_chain = f"[0:a]volume={args.vocal_gain_db}dB[v]"
-        inst_chain = f"[1:a]adelay={abs(offset_ms)}:all=1,volume={args.instrumental_gain_db}dB[i]"
+        vocal_chain = f"[0:a]{v_fx}volume={args.vocal_gain_db}dB[v]"
+        inst_chain = f"[1:a]adelay={abs(offset_ms)}:all=1,volume={args.instrumental_gain_db}dB{i_fx}[i]"
 
     loudness_i = args.loudness_i if args.loudness_i is not None else int(config["audio"]["mix_loudness_i"])
     filter_complex = (
@@ -655,10 +703,16 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--sample-rate", type=int, default=None, help="Output sample rate.")
     dataset.add_argument("--segment-seconds", type=int, default=None, help="Chunk length for training clips.")
     dataset.add_argument("--loudness-i", type=int, default=None, help="Integrated loudness target for voice clips.")
+    dataset.add_argument("--denoise", action="store_true", default=True, help="Apply FFT denoise to remove mic static.")
+    dataset.add_argument("--no-denoise", action="store_false", dest="denoise", help="Disable denoising.")
     dataset.add_argument("--trim-silence", action="store_true", help="Try to remove leading/trailing silence.")
     dataset.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
     dataset.set_defaults(func=cmd_make_dataset)
 
+    analyze = subparsers.add_parser("analyze", help="Analyze the quality and duration of a prepared dataset.")
+    analyze.add_argument("--name", default="my_voice", help="Voice model/dataset name.")
+    analyze.set_defaults(func=cmd_analyze)
+    
     trim = subparsers.add_parser("trim-test", help="Cut a 30-60 second test clip from a song.")
     trim.add_argument("input", help="Source song file.")
     trim.add_argument("--name", default=None, help="Output base name.")
@@ -691,6 +745,9 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--vocal-gain-db", type=float, default=0.0, help="Vocal gain in dB before mixing.")
     mix.add_argument("--instrumental-gain-db", type=float, default=0.0, help="Instrumental gain in dB before mixing.")
     mix.add_argument("--vocal-offset-ms", type=int, default=0, help="Delay vocals if positive, instrumental if negative.")
+    mix.add_argument("--reverb", choices=["none", "subtle", "medium"], default="subtle", help="Add spatial reverb to vocals.")
+    mix.add_argument("--vocal-eq", action="store_true", default=True, help="Apply EQ to make vocals sit in the mix.")
+    mix.add_argument("--no-vocal-eq", action="store_false", dest="vocal_eq", help="Disable vocal EQ.")
     mix.add_argument("--loudness-i", type=int, default=None, help="Final integrated loudness target.")
     mix.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
     mix.set_defaults(func=cmd_mix)
